@@ -9,6 +9,7 @@ This is a temporary script file.
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
+from urllib.parse import urljoin
 
 def get_soup(url):
     reqs = requests.get(url)
@@ -33,6 +34,13 @@ def filter_attachments(pair):
 def file_type(link):
     extension=link.split(".")[-1]
     return(extension)
+
+def tryURLResults(url):
+    try:
+        df=takeUrlGetResults(url)
+        return(df)
+    except:
+        print(url)
     
 def takeUrlGetResults(url):
     soup=get_soup(url)
@@ -49,13 +57,34 @@ def takeUrlGetResults(url):
     df['Page Content']=content
     return(df)
 
+def crawl_site(url, depth=3):
+    # this piece starts at a website and gets the other links on those, and does recursion
+    # stop if it's not at dc.gov
+    visited_urls = set()
+    def crawl(url, depth):
+        if depth == 0:
+            return
+        if url in visited_urls:
+            return
+        visited_urls.add(url)
+        try:
+            response = requests.get(url)
+        except (requests.exceptions.MissingSchema, requests.exceptions.ConnectionError):
+            return
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for link in soup.find_all('a'):
+            try:
+                href = link.get('href')
+                if href:
+                    href = urljoin(url, href)
+                    crawl(href, depth - 1)
+            except:
+                pass
+    crawl(url, depth)
+    return visited_urls
 
-
-url="https://osse.dc.gov/page/2021-22-parcc-and-msaa-results-and-resources"
-df= takeUrlGetResults(url)
  
- 
-
-
-
-    
+visited_urls=crawl_site("https://dc.gov/directory", depth=4)
+just_dc_urls=[i for i in visited_urls if "dc.gov" in i]
+subdfs=[tryURLResults(url) for url in just_dc_urls]
+df=pd.concat(subdfs)
