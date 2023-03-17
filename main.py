@@ -105,3 +105,4 @@ just_dc_urls=[i for i in visited_urls if i.startswith("https://dcps.dc.gov")]
 subdfs=[takeUrlGetResults(url) for url in just_dc_urls]
 df=pd.concat(subdfs)
 df.to_csv("sampleResults.csv")
+pd.DataFrame(just_dc_urls).to_csv("urls.csv")
