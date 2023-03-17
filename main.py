@@ -5,9 +5,59 @@ from urllib.parse import urljoin
 import time
 from urllib3.exceptions import InsecureRequestWarning
 from urllib3 import disable_warnings
-
+import re
 disable_warnings(InsecureRequestWarning)
+from typing import Optional, Tuple, List
 
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+
+def search_google_selenium(query: str, domain: str, num_results: int) -> List[str]:
+    """
+    Search Google for the given query and domain and return the first num_results URLs using Selenium.
+
+    :param query: Search query.
+    :param domain: Domain to search within.
+    :param num_results: Number of results to return.
+    :return: List of URLs matching the query and domain.
+    """
+    query = f"site:{domain} {query}"
+    driver = webdriver.Chrome()
+    driver.get("https://www.google.com")
+    search_box = driver.find_element(By.NAME, "q")
+    search_box.send_keys(query)
+    search_box.send_keys(Keys.RETURN)
+
+    urls = []
+    max_pages = (num_results // 10) + 1 if num_results % 10 != 0 else num_results // 10
+    pages_visited = 0
+
+    while len(urls) < num_results and pages_visited < max_pages:
+        time.sleep(2)
+        results = driver.find_elements(By.XPATH, "//div[@class='g']//a[not(ancestor::div[@class='xpd'])]")
+        urls.extend([result.get_attribute("href") for result in results[:num_results - len(urls)]])
+        
+        next_button = driver.find_elements(By.CSS_SELECTOR, "#pnnext")
+        if not next_button:
+            break
+
+        next_button[0].click()
+        pages_visited += 1
+
+    driver.quit()
+    return urls
+
+
+def deduplicate_urls(urls: List[str]) -> List[str]:
+    """
+    Remove duplicate URLs from the list.
+
+    :param urls: List of URLs.
+    :return: List of unique URLs.
+    """
+    return list(set(urls))
 
 def get_soup(url: str) -> BeautifulSoup:
     """
@@ -17,35 +67,37 @@ def get_soup(url: str) -> BeautifulSoup:
     :return: Soup object of the webpage.
     """
     reqs = requests.get(url, verify=False)
-    soup = BeautifulSoup(reqs.text, 'html.parser')
+    soup = BeautifulSoup(reqs.text, 'lxml')
     return soup
 
 
-def get_links(soup: BeautifulSoup) -> dict:
+def get_links(soup: BeautifulSoup) -> dict[str, str]:
     """
-    Extract all the links from the soup object and return them in a dictionary.
+    Extract links from a BeautifulSoup object and return a dictionary.
 
-    :param soup: Soup object of the webpage.
-    :return: Dictionary containing the text and link of each <a> element.
+    :param soup: BeautifulSoup object.
+    :return: Dictionary of link text and corresponding URLs.
     """
     url_dict = {}
     for link in soup.find_all('a'):
         url_on_page = link.get('href')
         text = link.text
-        url_dict[text] = url_on_page
+        if url_on_page is not None:
+            url_dict[text] = url_on_page
     return url_dict
 
-
-def filter_attachments(pair: tuple) -> bool:
+def filter_attachments(pair: Tuple[str, Optional[str]]) -> bool:
     """
-    Check if the "attachments" keyword is present in the value of the input tuple.
+    Check if the given key-value pair contains "attachments" in the value.
 
-    :param pair: Tuple containing key and value.
-    :return: True if "attachments" is present in the value, False otherwise.
+    :param pair: Key-value pair of a dictionary.
+    :return: True if "attachments" is in the value, False otherwise.
     """
-    _, value = pair
-    return "attachments" in value
-
+    key, value = pair
+    if value is not None:
+        return "attachments" in value
+    else:
+        return False
 
 def file_type(link: str) -> str:
     """
@@ -110,7 +162,7 @@ def crawl_site(url: str, depth: int = 3) -> set:
         except (requests.exceptions.MissingSchema, requests.exceptions.ConnectionError) as e:
             print(f"Error for URL {url}: {e}")
             return
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(response.text, 'lxml')
         for link in soup.find_all('a'):
             try:
                 href = link.get('href')
@@ -124,9 +176,45 @@ def crawl_site(url: str, depth: int = 3) -> set:
     return visited_urls
 
 
-visited_urls = crawl_site("https://dcps.dc.gov/service/school-data", depth=3)
-just_dc_urls = [i for i in visited_urls if i.startswith("https://dcps.dc.gov")]
+manual_urls = [
+    "https://dcps.dc.gov/service/school-data",
+    "https://opendata.dc.gov/",
+    "https://octo.dc.gov/service/open-data",
+    "https://dchealth.dc.gov/service/data-and-statistics"
+    # Add more URLs as needed
+]
+search_results = manual_urls
+# Crawl each site and de-duplicate the results
+all_visited_urls = []
+for url in search_results:
+    visited_urls = crawl_site(url, depth=3)
+    all_visited_urls.extend(visited_urls)
+
+
+unique_visited_urls = deduplicate_urls(all_visited_urls)
+
+# Filter only dc.gov URLs
+pattern = re.compile(r"^https:\/\/(?:[a-z0-9-]+\.)?dc\.gov")
+just_dc_urls = [url for url in unique_visited_urls if pattern.match(url)]
+
+# Run the existing code on the filtered URLs
 sub_dfs = [take_url_get_results(url) for url in just_dc_urls]
 df = pd.concat(sub_dfs, ignore_index=True)
 df.to_csv("sampleResults.csv")
 pd.DataFrame(just_dc_urls).to_csv("urls.csv")
+possiblyMissingUrls = [i for i in just_dc_urls if i not in set(df['Parent URL'])]
+pd.DataFrame(possiblyMissingUrls).to_csv("urls with no files.csv")
+
+"""
+
+Examples of possibly missing URLs and if there were actually files there:
+    
+    1. https://dcps.dc.gov/page/health-and-wellness: no files
+    2. https://dcps.dc.gov/page/dcps-teachers-and-educators: no files
+    3. https://dcps.dc.gov/page/budget-and-finance: no files
+    4. https://dcps.dc.gov/page/sustainable-schools: no files
+    5. https://dcps.dc.gov/page/school-planning: no files
+    6. https://dcps.dc.gov/food
+
+
+"""
