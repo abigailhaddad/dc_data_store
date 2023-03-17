@@ -10,9 +10,21 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from urllib.parse import urljoin
+import time
+from urllib3.exceptions import InsecureRequestWarning
+from urllib3 import disable_warnings
+
+disable_warnings(InsecureRequestWarning)
+
+
+
+disable_warnings(InsecureRequestWarning)
+
+page = requests.get('http://facebook.com', verify=False)
+
 
 def get_soup(url):
-    reqs = requests.get(url)
+    reqs = requests.get(url, verify=False)
     soup = BeautifulSoup(reqs.text, 'html.parser')
     return(soup)
     
@@ -35,24 +47,28 @@ def file_type(link):
     extension=link.split(".")[-1]
     return(extension)
 
-def tryURLResults(url):
+def takeUrlGetResults(url):
+    time.sleep(1) 
     try:
-        df=takeUrlGetResults(url)
-        return(df)
+        soup=get_soup(url)
     except:
         print(url)
-    
-def takeUrlGetResults(url):
-    soup=get_soup(url)
     for item in soup.find_all('title'):
         title=item.get_text()
-    content = soup.find('meta', {'name':'description'}).get('content')
+    try:
+        content = soup.find('meta', {'name':'description'}).get('content')
+    except:
+        content="missing"
+    print(url)
     urlDict=get_links(soup)
     filtered_urls= dict(filter(filter_attachments, urlDict.items()))
     df=pd.DataFrame()
     df['Name']=filtered_urls.keys()
     df['Link']=filtered_urls.values()
-    df['Title']=title
+    try:
+        df['Title']=title
+    except:
+        df['Title']="missing"
     df['Extension']=df['Link'].apply(file_type)
     df['Page Content']=content
     return(df)
@@ -84,7 +100,8 @@ def crawl_site(url, depth=3):
     return visited_urls
 
  
-visited_urls=crawl_site("https://dc.gov/directory", depth=4)
-just_dc_urls=[i for i in visited_urls if "dc.gov" in i]
-subdfs=[tryURLResults(url) for url in just_dc_urls]
+visited_urls=crawl_site("https://dcps.dc.gov/service/school-data", depth=3)
+just_dc_urls=[i for i in visited_urls if i.startswith("https://dcps.dc.gov")]
+subdfs=[takeUrlGetResults(url) for url in just_dc_urls]
 df=pd.concat(subdfs)
+df.to_csv("sampleResults.csv")
