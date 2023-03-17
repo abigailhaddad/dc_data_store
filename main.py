@@ -84,6 +84,7 @@ def take_url_get_results(url: str) -> pd.DataFrame:
     df['Title'] = title
     df['Extension'] = df['Link'].apply(file_type)
     df['Page Content'] = content
+    df['Parent URL']=url
     return df
 
 
@@ -129,4 +130,3 @@ sub_dfs = [take_url_get_results(url) for url in just_dc_urls]
 df = pd.concat(sub_dfs, ignore_index=True)
 df.to_csv("sampleResults.csv")
 pd.DataFrame(just_dc_urls).to_csv("urls.csv")
-
